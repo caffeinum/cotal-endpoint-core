@@ -3,7 +3,7 @@
  * sticky reads, offset + peerId persistence. Temp dirs only, no network. `tsx --test test/config.test.ts`.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -70,6 +70,18 @@ test("peerId mints once and is stable across reads (durable open-mesh id)", () =
   const dir = mkdtempSync(join(tmpdir(), "ep-"));
   const cfg = cfgIn(dir, { space: "pid" });
   const a = peerId(cfg);
-  assert.match(a, /[0-9a-f-]{36}/);
+  // cotal 0.11: a NATS-safe principal token — no dashes (a dashed UUID is rejected on connect).
+  assert.match(a, /^[0-9a-f]{32}$/);
   assert.equal(peerId(cfg), a, "same id on the next read");
+});
+
+test("peerId migrates a legacy dashed UUID .id file in place (0.11 upgrade)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ep-"));
+  const cfg = cfgIn(dir, { space: "pid" });
+  const legacy = "6a3ec0fd-4bd0-45c2-a72b-9b29b4297ce7";
+  mkdirSync(join(dir, "pid"), { recursive: true });
+  writeFileSync(join(dir, "pid", "telegram.id"), legacy);
+  const migrated = peerId({ ...cfg, name: "telegram" });
+  assert.equal(migrated, "6a3ec0fd4bd045c2a72b9b29b4297ce7", "dashes stripped, same underlying id");
+  assert.ok(!migrated.includes("-"), "no dashes");
 });

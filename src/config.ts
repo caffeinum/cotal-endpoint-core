@@ -48,16 +48,23 @@ export function stateDir(cfg: EndpointConfig): string {
   return dir;
 }
 
-/** The pinned open-mesh peer id: read `<name>.id`, else mint a UUID and persist it. */
+/** The pinned open-mesh peer id: read `<name>.id`, else mint one and persist it. cotal 0.11's
+ *  owner/actor principal grammar forbids '-' in a token, so the id must be a NATS-safe `[A-Za-z0-9_]`
+ *  token — a dashed UUID is rejected on connect ("invalid owner/actor token"). Strip dashes on mint AND
+ *  migrate a legacy dashed `.id` file in place so the endpoint keeps the SAME inbox across the upgrade. */
 export function peerId(cfg: EndpointConfig): string {
   const file = join(stateDir(cfg), `${cfg.name}.id`);
   if (existsSync(file)) {
-    const id = readFileSync(file, "utf8").trim();
-    if (id) return id;
+    const raw = readFileSync(file, "utf8").trim();
+    if (raw) {
+      const safe = raw.replace(/-/g, "");
+      if (safe !== raw) writeFileAtomic(file, safe);
+      return safe;
+    }
   }
-  const id = randomUUID();
+  const id = randomUUID().replace(/-/g, "");
   // Atomic write: the `.id` file IS the durability guarantee — a half-written/blanked id would mint a
-  // NEW uuid next start, so an agent's replies redeliver to the OLD (dead) consumer and are lost.
+  // NEW id next start, so an agent's replies redeliver to the OLD (dead) consumer and are lost.
   writeFileAtomic(file, id);
   return id;
 }
