@@ -1,0 +1,57 @@
+.gitignore
+  s_ed25aaaf9c7e77::t_505cc5a69e04bb 1-4
+README.md
+  s_ed25aaaf9c7e77::t_6e36ec77fea254 1-97
+package.json
+  s_ed25aaaf9c7e77::t_b3120548a7c263 1-28
+src/bridge.ts
+  s_ed25aaaf9c7e77::t_523743cd149363 1-369
+src/commands.ts
+  s_ed25aaaf9c7e77::t_05945b53914d95 1-186
+src/config.ts
+  s_ed25aaaf9c7e77::t_7778616996545e 1-134
+src/index.ts
+  s_ed25aaaf9c7e77::t_221fd44788f861 1-13
+src/mesh.ts
+  s_ed25aaaf9c7e77::t_911f8407f5b2b5 1-85
+src/router.ts
+  s_ed25aaaf9c7e77::t_3776dc81f7750d 1-263
+src/transcribe.ts
+  s_ed25aaaf9c7e77::t_6f36b8fb17ea3e 1-11
+src/transport.ts
+  s_ed25aaaf9c7e77::t_a5a1ee7c5f9097 1-115
+test/bridge.test.ts
+  s_ed25aaaf9c7e77::t_a5b120af4d1e12 1-217
+test/commands.test.ts
+  s_ed25aaaf9c7e77::t_0abf9681eb7ea2 1-224
+test/config.test.ts
+  s_ed25aaaf9c7e77::t_4e422754a99c99 1-75
+test/fakes.ts
+  s_ed25aaaf9c7e77::t_3e2705d063653f 1-134
+test/router.test.ts
+  s_ed25aaaf9c7e77::t_70da05c0a2d1ab 1-230
+test/signal.test.ts
+  s_ed25aaaf9c7e77::t_8b6cea09c3d2e0 1-188
+test/transcribe.test.ts
+  s_ed25aaaf9c7e77::t_3e0d7d5deeb714 1-124
+tsconfig.json
+  s_ed25aaaf9c7e77::t_1f54526c34e499 1-16
+LICENSE
+  s_ed25aaaf9c7e77::t_a4b897b7e3454a 1-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.13",
+  "base_commit_sha": "60959954892bcdef12b0602e195ebafa06bcf546",
+  "prompts": {},
+  "sessions": {
+    "s_ed25aaaf9c7e77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90dd1251-161e-469a-96db-040d1e555035",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Aleksey Bykhun <theisease@gmail.com>"
+    }
+  }
+}
