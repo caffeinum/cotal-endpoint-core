@@ -1,0 +1,53 @@
+test/router.test.ts
+  s_ed25aaaf9c7e77::t_5222ddec77e9d7 155-180,198-223
+  s_ed25aaaf9c7e77::t_766b7474dcc522 181-197
+  s_ed25aaaf9c7e77::t_2e6f5cb639c2bb 12,15,19
+test/bridge.test.ts
+  s_ed25aaaf9c7e77::t_2807bd809e0c37 14
+  s_ed25aaaf9c7e77::t_ac0e5ac6368612 300-375
+src/bridge.ts
+  s_ed25aaaf9c7e77::t_e7503970162d78 577
+  s_ed25aaaf9c7e77::t_de64f0ba7398bc 410-437,445-448
+  s_ed25aaaf9c7e77::t_c644fb24543316 373-379
+  s_ed25aaaf9c7e77::t_33ce3e89b728bf 438-442,444
+  s_ed25aaaf9c7e77::t_243e890507be3a 40,43,50
+  s_ed25aaaf9c7e77::t_d85c4885ba99f9 443
+src/router.ts
+  s_ed25aaaf9c7e77::t_74899346d8887e 64-75,83-135,148-149
+  s_ed25aaaf9c7e77::t_30617bade12216 136-147
+  s_ed25aaaf9c7e77::t_19a0d4054520d2 22
+  s_ed25aaaf9c7e77::t_c841519d92c048 76-82
+src/transport.ts
+  s_ed25aaaf9c7e77::t_243a13c91b51ce 141-144,146-150
+  s_ed25aaaf9c7e77::t_0ddbe886f2c17c 84-101
+  s_ed25aaaf9c7e77::t_6e9d5796bbe90f 125-134
+test/fakes.ts
+  s_ed25aaaf9c7e77::t_7bbdc8568615e8 8-9
+  s_ed25aaaf9c7e77::t_ef6ea8cb12ac9a 142-157,168-175
+  s_ed25aaaf9c7e77::t_860f81463e007b 103-108
+  s_ed25aaaf9c7e77::t_8fb10e241931a9 176-178
+test/commands.test.ts
+  s_ed25aaaf9c7e77::t_601a0c75e381e0 218
+  s_ed25aaaf9c7e77::t_4e81adab1ba4ae 110-133
+src/commands.ts
+  s_ed25aaaf9c7e77::t_9f34a79e312f75 16-17
+  s_ed25aaaf9c7e77::t_fbd7b971727ddc 40-43
+  s_ed25aaaf9c7e77::t_8ad98d0ce8a97b 131-141
+  s_ed25aaaf9c7e77::t_3ed2a3f1996028 130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.13",
+  "base_commit_sha": "6e4f52fe252544e876fd5309fa8c256a8849f3ac",
+  "prompts": {},
+  "sessions": {
+    "s_ed25aaaf9c7e77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90dd1251-161e-469a-96db-040d1e555035",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Aleksey Bykhun <theisease@gmail.com>"
+    }
+  }
+}
