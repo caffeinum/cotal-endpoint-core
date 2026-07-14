@@ -1,0 +1,50 @@
+src/bridge.ts
+  s_ed25aaaf9c7e77::t_7e944fc16f550e 15,17
+  s_ed25aaaf9c7e77::t_550c0f05c09bbb 56-58
+  s_ed25aaaf9c7e77::t_1a4851a6a6d8da 358-369
+  s_ed25aaaf9c7e77::t_25695a695c20bb 516-518
+  s_ed25aaaf9c7e77::t_b74b83e3709062 74-76
+  s_ed25aaaf9c7e77::t_7d30cd5be98dab 405-412
+  s_ed25aaaf9c7e77::t_5b1f289b23c993 226-249
+test/bridge.test.ts
+  s_ed25aaaf9c7e77::t_6e3b8c8d3b9177 201-237,239-257
+  s_ed25aaaf9c7e77::t_612506f422fb1a 14
+  s_ed25aaaf9c7e77::t_5ba742125d97f8 24-27
+  s_ed25aaaf9c7e77::t_813f1f6c6d96df 258-278
+  s_ed25aaaf9c7e77::t_575f2c1d435483 238
+test/bind.test.ts
+  s_ed25aaaf9c7e77::t_a6f8fced307529 143,146-147
+  s_ed25aaaf9c7e77::t_72301dc979b5b6 1-142,144-145,148-157
+test/fakes.ts
+  s_ed25aaaf9c7e77::t_0efd1ac36edff8 33
+  s_ed25aaaf9c7e77::t_c2af0221645e94 45-50
+src/bind.ts
+  s_ed25aaaf9c7e77::t_dc38cd2c7b4267 1-138
+test/commands.test.ts
+  s_ed25aaaf9c7e77::t_d15b2bd5ea3302 31,38,50
+  s_ed25aaaf9c7e77::t_6968dc60f05595 194
+  s_ed25aaaf9c7e77::t_698595fe18a96c 169-190
+src/index.ts
+  s_ed25aaaf9c7e77::t_672068f43c2b36 11
+src/commands.ts
+  s_ed25aaaf9c7e77::t_a90ea49bc64c78 34-36
+  s_ed25aaaf9c7e77::t_8fc241dc22088c 162-176
+src/config.ts
+  s_ed25aaaf9c7e77::t_af155e37073ca9 38-39,41-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.13",
+  "base_commit_sha": "637fa61a1e292f00886a20ff588a75a2270a8345",
+  "prompts": {},
+  "sessions": {
+    "s_ed25aaaf9c7e77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90dd1251-161e-469a-96db-040d1e555035",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Aleksey Bykhun <theisease@gmail.com>"
+    }
+  }
+}
