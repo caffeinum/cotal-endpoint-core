@@ -5,6 +5,8 @@
  */
 import { EventEmitter } from "node:events";
 import type {
+  ButtonChoice,
+  CallbackQuery,
   CommandDesc,
   CommandScope,
   Formatter,
@@ -98,6 +100,12 @@ export class FakeTransport implements Transport {
   fileSends: { chatId: number; path: string; filename?: string; caption?: string }[] = [];
   reactions: { chatId: number; messageId: number; reaction: string | undefined }[] = [];
   commandsSet: { cmds: CommandDesc[]; scope?: CommandScope }[] = [];
+  /** Recorders for the inline-keyboard / callback capability (the /switch flow). */
+  buttonSends: { chatId: number; prompt: string; choices: ButtonChoice[]; messageId: number }[] = [];
+  edits: { chatId: number; messageId: number; text: string; mode?: string }[] = [];
+  answered: { callbackId: string; text?: string }[] = [];
+  /** Queue driven through run()'s 3rd arg (onCallback), like {@link inbounds} for the inbound leg. */
+  callbacks: CallbackQuery[] = [];
   nextId = 1000;
   label = "@candlestick_dev_bot (id 1)";
   reactThrows = false;
@@ -131,7 +139,22 @@ export class FakeTransport implements Transport {
   async setCommands(cmds: CommandDesc[], scope?: CommandScope) {
     this.commandsSet.push({ cmds, scope });
   }
-  async run(onInbound: (i: Inbound) => Promise<void>, signal: AbortSignal) {
+  async sendButtons(chatId: number, prompt: string, choices: ButtonChoice[]) {
+    const messageId = this.nextId++;
+    this.buttonSends.push({ chatId, prompt, choices, messageId });
+    return { messageId };
+  }
+  async editText(chatId: number, messageId: number, text: string, opts?: { mode?: string }) {
+    this.edits.push({ chatId, messageId, text, mode: opts?.mode });
+  }
+  async answerCallback(callbackId: string, opts?: { text?: string }) {
+    this.answered.push({ callbackId, text: opts?.text });
+  }
+  async run(
+    onInbound: (i: Inbound) => Promise<void>,
+    signal: AbortSignal,
+    onCallback?: (cb: CallbackQuery) => Promise<void>,
+  ) {
     while (!signal.aborted) {
       const inb = this.inbounds.shift();
       if (inb) {
@@ -139,6 +162,17 @@ export class FakeTransport implements Transport {
           await onInbound(inb);
         } catch {
           // poison-guard: a throwing handler must not wedge the loop
+        }
+        continue;
+      }
+      // A callback (button tap) is delivered under the SAME poison-guard. Only drained when a caller
+      // passed onCallback (a 2-arg caller never invokes it — mirrors the real transport).
+      if (onCallback && this.callbacks.length) {
+        const cb = this.callbacks.shift()!;
+        try {
+          await onCallback(cb);
+        } catch {
+          // poison-guard
         }
         continue;
       }

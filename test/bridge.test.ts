@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import type { CotalMessage } from "@cotal-ai/core";
-import { readAllowlist, runBridge, SendError, type EndpointConfig } from "../src/index.js";
+import { readAllowlist, readSticky, runBridge, SendError, type EndpointConfig } from "../src/index.js";
 import { FakeEndpoint, FakeTransport, inbound, richFormatter, tick } from "./fakes.js";
 
 function cfgIn(dir: string, over: Partial<EndpointConfig> = {}): EndpointConfig {
@@ -296,4 +296,80 @@ test("a `/`-leading swipe-reply threads to the agent instead of command-parsing"
   await bridge.stop();
   assert.deepEqual(ep.unicasts, [{ id: "id-alice", text: "/deploy now" }], "the /-leading reply threads to alice verbatim");
   assert.ok(!tp.sends.some((s) => /unknown command/.test(s.text)), "must NOT reply an unknown-command pointer");
+});
+
+// ── /switch: tap-to-switch callback handling (handleCallback, driven by run's 3rd arg) ──────────────
+test("an allowlisted tap latches + persists the sticky, answers the callback, edits the prompt, and a following plain line DMs the switched agent", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ep-"));
+  const ep = new FakeEndpoint();
+  ep.roster = [{ card: { id: "id-alice", name: "alice" }, status: "idle" }];
+  const tp = new FakeTransport();
+  const cfg = cfgIn(dir, { seedChats: [42] });
+  const bridge = await runBridge(cfg, tp, { buildEndpoint: () => ep as never, log: () => {} });
+  await tick();
+  // Tap the "@alice" button on the /switch prompt (message 555) in the allowlisted chat 42.
+  tp.callbacks.push({ chatId: 42, messageId: 555, callbackId: "cb1", data: "sw|dm|alice" });
+  await tick();
+  assert.deepEqual(tp.answered, [{ callbackId: "cb1", text: undefined }], "spinner stopped (no oracle text)");
+  assert.deepEqual(
+    tp.edits,
+    [{ chatId: 42, messageId: 555, text: "→ now talking to @alice", mode: undefined }],
+    "the prompt is rewritten in place (keyboard dropped)",
+  );
+  assert.deepEqual(readSticky(cfg).get(42), { kind: "dm", name: "alice" }, "the switch is persisted to disk");
+  // The sticky took: a plain line now DMs alice.
+  tp.inbounds.push(inbound("any updates?", { chatId: 42, messageId: 2 }));
+  await tick();
+  await bridge.stop();
+  assert.deepEqual(ep.unicasts, [{ id: "id-alice", text: "any updates?" }], "a following plain line DMs the switched agent");
+});
+
+test("a tap from a NON-allowlisted chat is ignored — spinner stopped, no switch, no edit", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ep-"));
+  const ep = new FakeEndpoint();
+  ep.roster = [{ card: { id: "id-alice", name: "alice" }, status: "idle" }];
+  const tp = new FakeTransport();
+  const cfg = cfgIn(dir, { seedChats: [42] }); // chat 99 is NOT allowlisted
+  const bridge = await runBridge(cfg, tp, { buildEndpoint: () => ep as never, log: () => {} });
+  await tick();
+  tp.callbacks.push({ chatId: 99, messageId: 7, callbackId: "cb99", data: "sw|dm|alice" });
+  await tick();
+  await bridge.stop();
+  assert.deepEqual(tp.answered, [{ callbackId: "cb99", text: undefined }], "spinner stopped, but the tap is a no-op");
+  assert.equal(tp.edits.length, 0, "a non-allowlisted tap must not edit any message");
+  assert.equal(readSticky(cfg).get(99), undefined, "no sticky is set for a non-allowlisted chat");
+});
+
+test("a tap for a DEPARTED agent is rejected (no-longer-present) with a message and does NOT change the sticky", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ep-"));
+  const ep = new FakeEndpoint(); // empty roster → "ghost" resolves to nobody
+  const tp = new FakeTransport();
+  const cfg = cfgIn(dir, { seedChats: [42] });
+  const bridge = await runBridge(cfg, tp, { buildEndpoint: () => ep as never, log: () => {} });
+  await tick();
+  tp.callbacks.push({ chatId: 42, messageId: 88, callbackId: "cbG", data: "sw|dm|ghost" });
+  await tick();
+  await bridge.stop();
+  assert.deepEqual(tp.answered, [{ callbackId: "cbG", text: "no longer present" }]);
+  assert.deepEqual(
+    tp.edits,
+    [{ chatId: 42, messageId: 88, text: "⚠ @ghost is no longer present", mode: undefined }],
+    "the prompt is rewritten to a not-present warning",
+  );
+  assert.equal(readSticky(cfg).get(42), undefined, "a stale target must NOT latch the sticky");
+});
+
+test("a tap with unrecognized callback data is rejected without a switch or an edit (no fabricated target)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ep-"));
+  const ep = new FakeEndpoint();
+  const tp = new FakeTransport();
+  const cfg = cfgIn(dir, { seedChats: [42] });
+  const bridge = await runBridge(cfg, tp, { buildEndpoint: () => ep as never, log: () => {} });
+  await tick();
+  tp.callbacks.push({ chatId: 42, messageId: 5, callbackId: "cbX", data: "garbage|nope" });
+  await tick();
+  await bridge.stop();
+  assert.deepEqual(tp.answered, [{ callbackId: "cbX", text: "unrecognized" }]);
+  assert.equal(tp.edits.length, 0, "unrecognized data must not edit any message");
+  assert.equal(readSticky(cfg).get(42), undefined, "unrecognized data must not latch a sticky");
 });

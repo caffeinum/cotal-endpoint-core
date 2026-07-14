@@ -13,7 +13,8 @@
  * reply back to the SAME chat, sticky get/set, identity) — so the whole layer is unit-testable with a
  * fake env, no network and no real endpoint.
  */
-import { stickyLabel, type StickyTarget } from "./router.js";
+import { stickyLabel, switchChoices, type StickyTarget } from "./router.js";
+import type { ButtonChoice } from "./transport.js";
 
 /** What a command handler is allowed to do — the seam the bridge fills with the live endpoint. */
 export interface CommandEnv {
@@ -36,6 +37,10 @@ export interface CommandEnv {
   tryBind(code: string): boolean;
   /** The bridge's own mesh identity + the default broadcast channel (for /here and /help). */
   identity: { name: string; space: string; server: string; defaultChannel: string };
+  /** OPTIONAL render seam: send an inline-keyboard prompt (the bridge fills it from
+   *  {@link import("./transport.js").Transport.sendButtons}). A channel WITHOUT inline keyboards omits it
+   *  → the handler degrades to a plain-text hint. Kept optional so the whole layer stays channel-agnostic. */
+  sendButtons?(prompt: string, choices: ButtonChoice[]): Promise<void>;
 }
 
 export interface CommandSpec {
@@ -120,6 +125,18 @@ export const COMMANDS: CommandSpec[] = [
       }
       env.setSticky({ kind: "dm", name: tgt.name });
       await env.reply(`sticky target → @${tgt.name}. plain messages now DM ${tgt.name}.`);
+    },
+  },
+  {
+    command: "switch",
+    description: "Pick who this chat talks to (buttons)",
+    handler: async (_args, env) => {
+      // Tap-to-switch: render one button per present agent + 📢 all + #<defaultChannel>. The tap comes
+      // back as a callback the bridge decodes + latches (SEPARATE from /who, which stays read-only). A
+      // channel with no inline keyboards has no sendButtons seam → degrade to the text /to path.
+      const choices = switchChoices(env.roster(), env.identity.defaultChannel);
+      if (env.sendButtons) await env.sendButtons("Switch this chat to:", choices);
+      else await env.reply("buttons unsupported here — use /to <name>");
     },
   },
   {

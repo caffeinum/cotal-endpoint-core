@@ -37,15 +37,17 @@ import {
   chunkMessage,
   classifyChat,
   outboundLabel,
+  parseSwitchData,
   ReplyMap,
   routeInbound,
+  stickyLabel,
   textOf,
   type Action,
   type ReplyRef,
   type StickyTarget,
 } from "./router.js";
 import { commandMenu, parseCommand, runCommand, type CommandEnv } from "./commands.js";
-import { SendError, type Inbound, type Transport } from "./transport.js";
+import { SendError, type CallbackQuery, type Inbound, type Transport } from "./transport.js";
 import type { Transcriber } from "./transcribe.js";
 
 export interface BridgeDeps {
@@ -368,6 +370,13 @@ export async function runBridge(
         return ok;
       },
       identity: { name: cfg.name, space: cfg.space, server: cfg.server, defaultChannel: cfg.channel },
+      // Bind the /switch render seam to the transport's inline-keyboard capability, scoped to this chat.
+      // Absent when the channel has no buttons → the command layer degrades to the /to text hint.
+      sendButtons: transport.sendButtons
+        ? async (prompt, choices) => {
+            await transport.sendButtons!(chatId, prompt, choices);
+          }
+        : undefined,
     };
   }
 
@@ -396,6 +405,45 @@ export async function runBridge(
     } catch (e) {
       log(`#files announce failed (best-effort, ignored): ${(e as Error).message}`);
     }
+  }
+
+  // A button tap (inline keyboard) → switch THIS chat's sticky target. Channel-agnostic: the transport
+  // normalizes its native callback into a {@link CallbackQuery}; here we gate + STATELESSLY decode + LIVE-
+  // roster re-validate + latch + confirm. The decode carries only the target NAME (parseSwitchData) — the
+  // sticky is always re-resolved on the roster at dispatch, so a departed agent is caught either now
+  // (dm/anycast presence check below) or at send time. Peer of {@link handleInbound}, driven by run's 3rd arg.
+  async function handleCallback(cb: CallbackQuery): Promise<void> {
+    // A tap is NOT a bind path — a non-allowlisted chat can't switch. Stop its spinner and ignore silently.
+    if (classifyChat(cb.chatId, allow, cfg.learnFirstChat) !== "allow") {
+      await transport.answerCallback?.(cb.callbackId);
+      return;
+    }
+    const target = parseSwitchData(cb.data);
+    if (!target) {
+      // Unknown/malformed callback data — never fabricate a target; just stop the spinner with a note.
+      await transport.answerCallback?.(cb.callbackId, { text: "unrecognized" });
+      return;
+    }
+    // Re-validate presence on the LIVE roster for the routes that need a present peer. `all`/`channel`
+    // fan out / post at dispatch, so they need no presence check.
+    const gone =
+      (target.kind === "dm" && !resolveTargetId(ep, target.name)) ||
+      (target.kind === "anycast" && !rolePresent(ep, target.role));
+    if (gone) {
+      await transport.answerCallback?.(cb.callbackId, { text: "no longer present" });
+      await transport.editText?.(cb.chatId, cb.messageId, `⚠ ${stickyLabel(target)} is no longer present`);
+      return;
+    }
+    sticky.set(cb.chatId, target);
+    await transport.answerCallback?.(cb.callbackId); // stop the client's loading spinner FIRST — the ack
+    // must not hinge on the disk write below (writeSticky is sync fs and throws on ENOSPC/EACCES/RO-FS).
+    try {
+      writeSticky(cfg, sticky); // persist the tap-switch so a restart remembers it (best-effort)
+    } catch (e) {
+      log(`/switch: couldn't persist sticky for chat ${cb.chatId}: ${(e as Error).message}`);
+    }
+    // Rewrite the button message in place (and drop the keyboard) so the confirmation replaces the prompt.
+    await transport.editText?.(cb.chatId, cb.messageId, "→ now talking to " + stickyLabel(target));
   }
 
   async function handleInbound(inb: Inbound): Promise<void> {
@@ -526,7 +574,7 @@ export async function runBridge(
   }
 
   const abort = new AbortController(); // cancels the transport's inbound loop on stop()
-  const loop = transport.run(handleInbound, abort.signal).catch((e) => {
+  const loop = transport.run(handleInbound, abort.signal, handleCallback).catch((e) => {
     log(`inbound loop ended: ${(e as Error).message}`);
   });
 

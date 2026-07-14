@@ -81,6 +81,24 @@ export interface Inbound {
   file?: FileRef;
 }
 
+/** One button in an inline keyboard: a human `label` and the opaque `data` echoed back on tap. `data`
+ *  must be ≤ 64 bytes (the Telegram callback_data cap) — the router encodes/validates it, never truncates. */
+export interface ButtonChoice {
+  label: string;
+  data: string;
+}
+
+/** A button tap, normalized by the transport from its native callback shape. `data` is the tapped
+ *  button's opaque payload (the router decodes it); `callbackId` is answered to stop the client spinner;
+ *  `messageId` is the button message the transport can edit in place; `userId` is the tapping user, if known. */
+export interface CallbackQuery {
+  chatId: number;
+  messageId: number;
+  callbackId: string;
+  data: string;
+  userId?: number;
+}
+
 /**
  * The channel transport. Owns its OWN inbound loop (long-poll / websocket / webhook) via {@link run},
  * and exposes the send/react/commands/typing primitives the bridge drives. The Formatter + max message
@@ -104,14 +122,32 @@ export interface Transport {
    *  like {@link setReaction}/{@link setCommands} — a channel without file upload simply omits it, and the
    *  bridge falls back to sending the agent's `[[file:…]]` text as-is. Throws {@link SendError} on failure. */
   sendFile?(chatId: number, opts: { path: string; filename?: string; caption?: string }): Promise<{ messageId: number }>;
+  /** Send a prompt with an inline keyboard of {@link ButtonChoice}s and return the sent message's id (so the
+   *  bridge can later edit it in place on tap). Optional like {@link sendFile} — a channel without inline
+   *  keyboards omits it and the command layer degrades to a text hint. Throws {@link SendError} on failure. */
+  sendButtons?(chatId: number, prompt: string, choices: ButtonChoice[]): Promise<{ messageId: number }>;
+  /** Edit an already-sent message's text in place (and drop any attached keyboard). `opts.mode` is the
+   *  channel-specific formatting directive (as on {@link send}). Optional; best-effort at the call site. */
+  editText?(chatId: number, messageId: number, text: string, opts?: { mode?: string }): Promise<void>;
+  /** Acknowledge a {@link CallbackQuery} (stop the client's loading spinner), optionally showing `opts.text`.
+   *  Optional; best-effort at the call site. */
+  answerCallback?(callbackId: string, opts?: { text?: string }): Promise<void>;
   /** Signal "typing…" to a chat (optional; not all channels support it). */
   setTyping?(chatId: number): Promise<void>;
   /**
    * Own the inbound loop. Drive `onInbound` once per normalized message and advance the transport's
    * internal cursor after each — POISON-GUARDED: a throwing `onInbound` is logged and skipped, never
    * wedging the loop. Resolve/return when `signal` aborts (so bridge.stop() doesn't block).
+   *
+   * `onCallback` is an ADDITIVE, optional 3rd param: when the transport supports inline-keyboard taps it
+   * drives it once per normalized {@link CallbackQuery} under the SAME poison-guard + cursor-advance. A
+   * transport without callback support (or a caller passing only two args) simply never invokes it.
    */
-  run(onInbound: (inbound: Inbound) => Promise<void>, signal: AbortSignal): Promise<void>;
+  run(
+    onInbound: (inbound: Inbound) => Promise<void>,
+    signal: AbortSignal,
+    onCallback?: (cb: CallbackQuery) => Promise<void>,
+  ): Promise<void>;
 }
 
 /**

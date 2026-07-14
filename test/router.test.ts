@@ -9,11 +9,14 @@ import type { CotalMessage } from "@cotal-ai/core";
 import {
   chunkMessage,
   classifyChat,
+  encodeSwitchTarget,
   formatOutbound,
   parseStickyTarget,
+  parseSwitchData,
   ReplyMap,
   routeInbound,
   stickyLabel,
+  switchChoices,
   textOf,
   type Inbound,
   type RouteCtx,
@@ -147,6 +150,75 @@ test("parseStickyTarget accepts valid shapes and rejects malformed ones", () => 
   assert.equal(parseStickyTarget({ kind: "bogus" }), undefined);
   assert.equal(parseStickyTarget("nope"), undefined);
   assert.equal(parseStickyTarget(null), undefined);
+});
+
+// ── /switch callback wire format: encode/decode round-trip + guards (router.ts) ────────────────────
+test("encodeSwitchTarget ↔ parseSwitchData round-trips all four kinds (exact wire forms)", () => {
+  const targets: StickyTarget[] = [
+    { kind: "dm", name: "alice" },
+    { kind: "channel", channel: "eng" },
+    { kind: "all" },
+    { kind: "anycast", role: "reviewer" },
+  ];
+  for (const t of targets) {
+    const data = encodeSwitchTarget(t);
+    assert.ok(Buffer.byteLength(data, "utf8") <= 64, `${data} within the 64-byte cap`);
+    assert.deepEqual(parseSwitchData(data), t, `round-trip for ${data}`);
+  }
+  assert.equal(encodeSwitchTarget({ kind: "dm", name: "alice" }), "sw|dm|alice");
+  assert.equal(encodeSwitchTarget({ kind: "channel", channel: "eng" }), "sw|ch|eng");
+  assert.equal(encodeSwitchTarget({ kind: "all" }), "sw|all");
+  assert.equal(encodeSwitchTarget({ kind: "anycast", role: "reviewer" }), "sw|role|reviewer");
+});
+
+test("encodeSwitchTarget THROWS over Telegram's 64-byte cap (fail loud, never truncate to a different target)", () => {
+  assert.throws(() => encodeSwitchTarget({ kind: "dm", name: "n".repeat(70) }), /64-byte cap/);
+  // "sw|dm|" is 6 bytes → a 58-char name lands EXACTLY at 64 bytes (allowed, boundary), 59 → 65 (throws).
+  assert.doesNotThrow(() => encodeSwitchTarget({ kind: "dm", name: "x".repeat(58) }));
+  assert.throws(() => encodeSwitchTarget({ kind: "dm", name: "x".repeat(59) }), /65 bytes/);
+});
+
+test("encodeSwitchTarget THROWS on a '|' in the value (fail loud — it can't round-trip through the pipe-delimited format)", () => {
+  assert.throws(() => encodeSwitchTarget({ kind: "dm", name: "a|b" }), /"\|" delimiter/);
+  assert.throws(() => encodeSwitchTarget({ kind: "channel", channel: "e|g" }), /"\|" delimiter/);
+  assert.throws(() => encodeSwitchTarget({ kind: "anycast", role: "r|x" }), /"\|" delimiter/);
+});
+
+test("switchChoices DROPS an un-encodable agent (over-cap / pipe) instead of throwing away the whole menu", () => {
+  const choices = switchChoices([{ name: "alice" }, { name: "x".repeat(70) }, { name: "b|d" }, { name: "bob" }], "general");
+  // only the two valid agents survive; 📢 all + #general still render — the offenders are silently dropped
+  assert.deepEqual(choices, [
+    { label: "@alice", data: "sw|dm|alice" },
+    { label: "@bob", data: "sw|dm|bob" },
+    { label: "📢 all", data: "sw|all" },
+    { label: "#general", data: "sw|ch|general" },
+  ]);
+});
+
+test("parseSwitchData is STRICT: unknown prefix / wrong arity / empty value → undefined (never a fabricated target)", () => {
+  assert.equal(parseSwitchData("go|dm|alice"), undefined); // wrong prefix
+  assert.equal(parseSwitchData("sw|dm"), undefined); // missing name
+  assert.equal(parseSwitchData("sw|dm|"), undefined); // empty name
+  assert.equal(parseSwitchData("sw|all|x"), undefined); // `all` takes no arg
+  assert.equal(parseSwitchData("sw|ch|"), undefined); // empty channel
+  assert.equal(parseSwitchData("sw|role|"), undefined); // empty role
+  assert.equal(parseSwitchData("sw|bogus|x"), undefined); // unknown kind
+  assert.equal(parseSwitchData(""), undefined);
+  assert.equal(parseSwitchData("sw"), undefined);
+});
+
+test("switchChoices: one @name button per agent, then 📢 all, then #<defaultChannel>", () => {
+  assert.deepEqual(switchChoices([{ name: "alice" }, { name: "bob" }], "general"), [
+    { label: "@alice", data: "sw|dm|alice" },
+    { label: "@bob", data: "sw|dm|bob" },
+    { label: "📢 all", data: "sw|all" },
+    { label: "#general", data: "sw|ch|general" },
+  ]);
+  // no agents present → just 📢 all + the default channel (never empty)
+  assert.deepEqual(switchChoices([], "general"), [
+    { label: "📢 all", data: "sw|all" },
+    { label: "#general", data: "sw|ch|general" },
+  ]);
 });
 
 // ── formatOutbound ────────────────────────────────────────────────────────────────────────────────

@@ -107,6 +107,30 @@ test("/to with no name → usage", async () => {
   assert.match(rec.replies[0], /usage: \/to <name>/);
 });
 
+// ── /switch (buttons; SEPARATE from /who) ──────────────────────────────────────────────────────────
+test("/switch renders one button per present agent + 📢 all + #<defaultChannel> via sendButtons", async () => {
+  const sent: { prompt: string; choices: { label: string; data: string }[] }[] = [];
+  const { env } = fakeEnv(
+    [{ name: "alice", status: "idle" }, { name: "bob", status: "working" }],
+    { sendButtons: async (prompt, choices) => { sent.push({ prompt, choices }); } },
+  );
+  await runCommand(parseCommand("/switch")!, env);
+  assert.equal(sent.length, 1, "one button prompt sent");
+  assert.equal(sent[0].prompt, "Switch this chat to:");
+  assert.deepEqual(sent[0].choices, [
+    { label: "@alice", data: "sw|dm|alice" },
+    { label: "@bob", data: "sw|dm|bob" },
+    { label: "📢 all", data: "sw|all" },
+    { label: "#general", data: "sw|ch|general" }, // fakeEnv identity.defaultChannel = "general"
+  ]);
+});
+
+test("/switch degrades to a /to text hint when the channel has no button seam", async () => {
+  const { env, rec } = fakeEnv([{ name: "alice", status: "idle" }]); // no sendButtons on this env
+  await runCommand(parseCommand("/switch")!, env);
+  assert.match(rec.replies[0], /buttons unsupported here — use \/to <name>/);
+});
+
 // ── /dm ──────────────────────────────────────────────────────────────────────────────────────────
 test("/dm unicasts to a present peer WITHOUT changing sticky", async () => {
   const { env, rec } = fakeEnv([{ name: "alice", status: "idle" }]);
@@ -191,7 +215,7 @@ test("/bind with no code → usage, tryBind not called (reveals no code state)",
 // ── commandMenu ──────────────────────────────────────────────────────────────────────────────────
 test("commandMenu is the table's primary commands, all valid keys", () => {
   const menu = commandMenu();
-  assert.deepEqual(menu.map((c) => c.command), ["who", "help", "to", "dm", "here", "bind"]);
+  assert.deepEqual(menu.map((c) => c.command), ["who", "help", "to", "switch", "dm", "here", "bind"]);
   for (const c of menu) {
     assert.match(c.command, /^[a-z][a-z0-9_]{0,31}$/, `bad command key: ${c.command}`);
     assert.ok(c.description.length > 0 && c.description.length <= 256);

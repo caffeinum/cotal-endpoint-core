@@ -19,7 +19,7 @@
  * stranger who texts the bot first is NOT auto-trusted onto your mesh.
  */
 import type { CotalMessage } from "@cotal-ai/core";
-import type { Inbound } from "./transport.js";
+import type { ButtonChoice, Inbound } from "./transport.js";
 
 /**
  * A chat's sticky (last) destination — persisted per chat so a restart remembers it.
@@ -59,6 +59,92 @@ export function parseStickyTarget(v: unknown): StickyTarget | undefined {
   if (o.kind === "all") return { kind: "all" };
   if (o.kind === "anycast" && typeof o.role === "string" && o.role) return { kind: "anycast", role: o.role };
   return undefined;
+}
+
+/**
+ * Callback-data wire format for tap-to-switch — pipe-delimited, STATELESS, ≤64 bytes (Telegram's
+ * callback_data cap):
+ *   sw|dm|<name> · sw|all · sw|ch|<channel> · sw|role|<role>
+ *
+ * Stateless is correct: a sticky target is ALWAYS re-resolved on the LIVE roster at dispatch, so a
+ * departed agent is caught at send time — the callback only needs to name the target, not carry state.
+ */
+
+/** Encode a sticky target as callback-data. Throws if the result exceeds Telegram's 64-byte cap
+ *  (fail loud — never silently truncate a name/channel/role into a different target). Pure. */
+export function encodeSwitchTarget(t: StickyTarget): string {
+  // The wire format is pipe-delimited, so a value containing "|" can't round-trip (parseSwitchData would
+  // split it into the wrong number of parts). Fail loud rather than emit a button that decodes to a
+  // different/undefined target. switchChoices catches this and simply drops the offending entry.
+  const val = t.kind === "dm" ? t.name : t.kind === "channel" ? t.channel : t.kind === "anycast" ? t.role : undefined;
+  if (val !== undefined && val.includes("|")) {
+    throw new Error(`encodeSwitchTarget: "${val}" contains the "|" delimiter — cannot encode a switch target for it`);
+  }
+  let data: string;
+  switch (t.kind) {
+    case "dm":
+      data = `sw|dm|${t.name}`;
+      break;
+    case "channel":
+      data = `sw|ch|${t.channel}`;
+      break;
+    case "all":
+      data = "sw|all";
+      break;
+    case "anycast":
+      data = `sw|role|${t.role}`;
+      break;
+  }
+  const bytes = Buffer.byteLength(data, "utf8");
+  if (bytes > 64) {
+    throw new Error(`encodeSwitchTarget: callback data is ${bytes} bytes, over Telegram's 64-byte cap: ${data}`);
+  }
+  return data;
+}
+
+/** Decode callback-data back into a sticky target. STRICT — any unknown prefix, wrong arity, or empty
+ *  name/channel/role → undefined (never a fabricated target). Pure. */
+export function parseSwitchData(data: string): StickyTarget | undefined {
+  const parts = data.split("|");
+  if (parts[0] !== "sw") return undefined;
+  switch (parts[1]) {
+    case "dm":
+      if (parts.length === 3 && parts[2]) return { kind: "dm", name: parts[2] };
+      return undefined;
+    case "ch":
+      if (parts.length === 3 && parts[2]) return { kind: "channel", channel: parts[2] };
+      return undefined;
+    case "all":
+      if (parts.length === 2) return { kind: "all" };
+      return undefined;
+    case "role":
+      if (parts.length === 3 && parts[2]) return { kind: "anycast", role: parts[2] };
+      return undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** Build the /switch button set: one @name per present agent, then 📢 all, then #<defaultChannel>.
+ *  Labels reuse stickyLabel; data reuses encodeSwitchTarget (which enforces the 64-byte cap). Pure. */
+export function switchChoices(agents: { name: string }[], defaultChannel: string): ButtonChoice[] {
+  const targets: StickyTarget[] = [
+    ...agents.map((a): StickyTarget => ({ kind: "dm", name: a.name })),
+    { kind: "all" },
+    { kind: "channel", channel: defaultChannel },
+  ];
+  const choices: ButtonChoice[] = [];
+  for (const t of targets) {
+    try {
+      choices.push({ label: stickyLabel(t), data: encodeSwitchTarget(t) });
+    } catch {
+      // An un-encodable target (name over Telegram's 64-byte cap, or containing the "|" delimiter) is
+      // inherently un-switchable via a button — DROP it rather than throw and take the whole menu down
+      // (the transport run-loop is poison-guarded, so a throw here would silently render zero buttons).
+      // The dropped agent is still reachable via `/to <name>`.
+    }
+  }
+  return choices;
 }
 
 export interface ReplyRef {
