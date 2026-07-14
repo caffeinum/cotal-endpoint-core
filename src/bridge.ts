@@ -12,7 +12,9 @@
  *                   an unknown/offline name fails loud to the chat.
  */
 import { basename } from "node:path";
+import { randomBytes } from "node:crypto";
 import type { CotalEndpoint, CotalMessage } from "@cotal-ai/core";
+import { BindMinter, BIND_CODE_PROTO, partsHaveBindRequest } from "./bind.js";
 import {
   readAllowlist,
   readSticky,
@@ -51,6 +53,9 @@ export interface BridgeDeps {
   /** Injectable voice transcriber. Omitted → voice messages are skipped gracefully (logged, not fatal).
    *  Tests inject a fake. */
   transcriber?: Transcriber;
+  /** Injectable bind-code minter — defaults to a real crypto-RNG + Date.now minter. Tests can inject a
+   *  deterministic one; a test can also just read the minted code off the reply DM's data part. */
+  minter?: BindMinter;
   log?: (msg: string) => void;
 }
 
@@ -66,6 +71,9 @@ export async function runBridge(
   const log = deps.log ?? ((m: string) => console.error(`[cotal-endpoint] ${m}`));
   const ep = (deps.buildEndpoint ?? buildEndpoint)(cfg);
   const transcriber = deps.transcriber;
+  // The bind-code minter: real crypto RNG + wall clock by default. A code is minted on a mesh peer's
+  // bind-request DM (below) and verified by /bind (via commandEnv.tryBind) — the two-domain bridge.
+  const minter = deps.minter ?? new BindMinter({ now: () => Date.now(), rand: (n) => new Uint8Array(randomBytes(n)) });
 
   const replyMap = new ReplyMap();
   // Per-chat sticky destination (dm/channel/all/anycast), loaded from disk so a restart REMEMBERS where
@@ -215,6 +223,30 @@ export async function runBridge(
         delivery.ack();
         return;
       }
+      // BIND-REQUEST interception (BEFORE any forward-to-chats): a mesh peer (the `paw bind` CLI or an
+      // agent) DMs us a bind-request data part to MINT a short-lived code. We reply the code straight back
+      // to the sender's durable inbox (readable text line + a bind-code data part) and NEVER forward it to
+      // a chat — a bind-request is a control message, not human content. Minting authority = being on the
+      // (local/authed) mesh, which already lets that peer DM every agent, so minting grants nothing new.
+      if (meta.kind === "dm" && partsHaveBindRequest(msg.parts)) {
+        const { code, ttlSec } = minter.mint();
+        const line =
+          `bind code: ${code} — valid ${ttlSec}s, one-time. ` +
+          `In the Telegram chat you want to authorize, send: /bind ${code}`;
+        try {
+          await ep.unicast(msg.from.id, line, {
+            parts: [
+              { kind: "text", text: line },
+              { kind: "data", data: { proto: BIND_CODE_PROTO, v: 1, code, ttlSec } },
+            ],
+          });
+          log(`minted bind code for ${msg.from.name} (${msg.from.id})`);
+        } catch (e) {
+          log(`bind-code reply to ${msg.from.name} failed: ${(e as Error).message}`);
+        }
+        delivery.ack();
+        return;
+      }
       if (allow.size === 0) {
         // Nowhere to deliver yet — a bot can't initiate a chat. A DM is HELD unacked (no ack, no nak) so
         // JetStream's AckWait paces redelivery and it lands once a chat is bound; a channel post is
@@ -323,6 +355,18 @@ export async function runBridge(
         sticky.set(chatId, target);
         writeSticky(cfg, sticky); // persist a /to change so a restart remembers it
       },
+      tryBind: (code: string) => {
+        const ok = minter.verify(code);
+        if (ok) {
+          allow.add(chatId);
+          writeAllowlist(cfg, allow); // a bound chat is just another allowlist entry — persist it
+          log(`chat ${chatId} bound via /bind`);
+        } else {
+          // Log the detail bridge-side only; the CHAT reply is always the same generic reject.
+          log(`/bind rejected for chat ${chatId} (wrong/expired/none/rate-limited)`);
+        }
+        return ok;
+      },
       identity: { name: cfg.name, space: cfg.space, server: cfg.server, defaultChannel: cfg.channel },
     };
   }
@@ -358,6 +402,14 @@ export async function runBridge(
     const chatId = inb.chatId;
     const verdict = classifyChat(chatId, allow, cfg.learnFirstChat);
     if (verdict === "ignore") {
+      // EXEMPTION: /bind is the ONE thing an as-yet-unauthorized chat may do — it's how a NEW chat
+      // authorizes ITSELF onto the mesh. Everything else from a non-allowlisted chat is dropped. The
+      // code check inside tryBind is globally rate-limited + generic-rejected, so this isn't an oracle.
+      const bind = parseCommand(inb.text);
+      if (bind && bind.name === "bind") {
+        await runCommand(bind, commandEnv(chatId));
+        return;
+      }
       if (allow.size === 0) {
         // No chat is bound and first-chat learning wasn't opted into — DROP loudly rather than
         // auto-trusting whoever texted first (an enumerable bot username is reachable by strangers).
@@ -461,7 +513,9 @@ export async function runBridge(
     if (!isThreadedReply) {
       const parsed = parseCommand(text);
       if (parsed) {
-        log(`/${parsed.name}${parsed.args ? " " + parsed.args : ""} (chat ${chatId})`);
+        // Never log a /bind code — it's a live one-time secret (design req: codes stay out of shared logs).
+        const argsForLog = parsed.name === "bind" ? "<redacted>" : parsed.args;
+        log(`/${parsed.name}${argsForLog ? " " + argsForLog : ""} (chat ${chatId})`);
         await runCommand(parsed, commandEnv(chatId));
         return;
       }

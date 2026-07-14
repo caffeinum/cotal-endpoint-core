@@ -31,6 +31,9 @@ export interface CommandEnv {
   getSticky(): StickyTarget | undefined;
   /** Latch this chat's sticky destination (persisted by the bridge). */
   setSticky(target: StickyTarget): void;
+  /** Attempt to authorize THIS chat with a bind code. True → verified, chat added to the allowlist +
+   *  persisted. False → generic failure — NO oracle (never distinguishes wrong/expired/none/rate-limited). */
+  tryBind(code: string): boolean;
   /** The bridge's own mesh identity + the default broadcast channel (for /here and /help). */
   identity: { name: string; space: string; server: string; defaultChannel: string };
 }
@@ -154,6 +157,21 @@ export const COMMANDS: CommandSpec[] = [
           `server: ${env.identity.server}\n` +
           `target: ${target}`,
       );
+    },
+  },
+  {
+    command: "bind",
+    description: "Authorize this chat with a code: /bind <code>",
+    handler: async (args, env) => {
+      const code = args.split(/\s+/)[0] ?? "";
+      if (!code) {
+        // No-oracle: usage doesn't reveal any code state (whether one is pending, etc.).
+        await env.reply("usage: /bind <code>");
+        return;
+      }
+      // GENERIC on failure — never distinguish wrong/expired/none/rate-limited (each leaks signal).
+      const ok = env.tryBind(code);
+      await env.reply(ok ? "✓ this chat is now authorized" : "invalid or expired code");
     },
   },
 ];

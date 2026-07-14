@@ -35,9 +35,14 @@ export interface EndpointConfig {
   creds?: string;
   /** Root dir for local state (`<stateRoot>/<space>/…`). */
   stateRoot: string;
-  /** Chat ids seeded onto the allowlist via config (e.g. --chat). */
+  /** Chat ids seeded onto the allowlist via config (e.g. --chat) — the deterministic "I know my chat id"
+   *  path. Keeps working alongside `/bind`. */
   seedChats: number[];
-  /** Opt-in: learn the first sender's chat when the allowlist is empty. Default false. */
+  /** DEV/TEST-ONLY (deprecated, default false): trust the FIRST sender's chat when the allowlist is empty
+   *  — "first stranger to text the enumerable bot wins", so INSECURE on any real network. Kept as a
+   *  hermetic-test / trusted-loopback convenience. The secure bootstrap for a NEW chat is `/bind <code>`
+   *  (a mesh-minted, TTL'd, one-time code — see {@link import("./bind.js").BindMinter}); `--chat` seeds
+   *  remain the deterministic path. Do NOT enable this in production. */
   learnFirstChat: boolean;
   /** Override for where INBOUND attachments (documents/photos) are saved. Absent → `<stateRoot>/<space>/files/`. */
   filesDir?: string;

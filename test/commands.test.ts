@@ -28,13 +28,14 @@ interface Rec {
   unicasts: { id: string; text: string }[];
   multicasts: { text: string; channel: string }[];
   sticky: StickyTarget | undefined;
+  bound: string[];
 }
 
 function fakeEnv(
   roster: { name: string; status: string }[] = [],
   over: Partial<CommandEnv> = {},
 ): { env: CommandEnv; rec: Rec } {
-  const rec: Rec = { replies: [], unicasts: [], multicasts: [], sticky: undefined };
+  const rec: Rec = { replies: [], unicasts: [], multicasts: [], sticky: undefined, bound: [] };
   const env: CommandEnv = {
     roster: () => roster,
     resolveTarget: (name) => {
@@ -46,6 +47,7 @@ function fakeEnv(
     reply: async (text) => { rec.replies.push(text); },
     getSticky: () => rec.sticky,
     setSticky: (target) => { rec.sticky = target; },
+    tryBind: (code) => { rec.bound.push(code); return code === "GOOD42"; },
     identity: { name: "telegram", space: "paw", server: "nats://127.0.0.1:4222", defaultChannel: "general" },
     ...over,
   };
@@ -164,10 +166,32 @@ test("unknown /command → friendly /help pointer (not silent)", async () => {
   assert.match(rec.replies[0], /unknown command "\/frobnicate" — try \/help/);
 });
 
+// ── /bind ────────────────────────────────────────────────────────────────────────────────────────
+test("/bind <valid> → tryBind called + authorized confirmation", async () => {
+  const { env, rec } = fakeEnv();
+  await runCommand(parseCommand("/bind GOOD42")!, env);
+  assert.deepEqual(rec.bound, ["GOOD42"]);
+  assert.match(rec.replies[0], /this chat is now authorized/);
+});
+
+test("/bind <wrong> → generic reject, no oracle", async () => {
+  const { env, rec } = fakeEnv();
+  await runCommand(parseCommand("/bind NOPE00")!, env);
+  assert.deepEqual(rec.bound, ["NOPE00"]);
+  assert.equal(rec.replies[0], "invalid or expired code");
+});
+
+test("/bind with no code → usage, tryBind not called (reveals no code state)", async () => {
+  const { env, rec } = fakeEnv();
+  await runCommand(parseCommand("/bind")!, env);
+  assert.equal(rec.bound.length, 0);
+  assert.match(rec.replies[0], /usage: \/bind <code>/);
+});
+
 // ── commandMenu ──────────────────────────────────────────────────────────────────────────────────
 test("commandMenu is the table's primary commands, all valid keys", () => {
   const menu = commandMenu();
-  assert.deepEqual(menu.map((c) => c.command), ["who", "help", "to", "dm", "here"]);
+  assert.deepEqual(menu.map((c) => c.command), ["who", "help", "to", "dm", "here", "bind"]);
   for (const c of menu) {
     assert.match(c.command, /^[a-z][a-z0-9_]{0,31}$/, `bad command key: ${c.command}`);
     assert.ok(c.description.length > 0 && c.description.length <= 256);

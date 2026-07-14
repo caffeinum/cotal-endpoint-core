@@ -30,7 +30,7 @@ export const agent = (name: string, role?: string, status = "idle"): Row => ({
 export class FakeEndpoint extends EventEmitter {
   card = { id: "telegram-id", name: "telegram", kind: "endpoint" as const };
   roster: Row[] = [];
-  unicasts: { id: string; text: string }[] = [];
+  unicasts: { id: string; text: string; parts?: Part[] }[] = [];
   multicasts: { text: string; channel?: string; parts?: Part[] }[] = [];
   anycasts: { service: string; text: string }[] = [];
   /** Legacy accessor mirroring the old fake's `sent.{unicast,multicast}` shape. */
@@ -42,8 +42,12 @@ export class FakeEndpoint extends EventEmitter {
   }
   async start() {}
   async stop() {}
-  async unicast(id: string, text: string) {
-    this.unicasts.push({ id, text });
+  async unicast(id: string, text: string, opts?: { parts?: Part[] }) {
+    // Only attach `parts` when present so existing deepEqual assertions on {id,text} still hold (a strict
+    // deepEqual distinguishes an own `parts: undefined` key from a missing one) — mirrors multicast.
+    const rec: { id: string; text: string; parts?: Part[] } = { id, text };
+    if (opts?.parts) rec.parts = opts.parts;
+    this.unicasts.push(rec);
     return {} as never;
   }
   async multicast(text: string, opts?: { channel?: string; parts?: Part[] }) {

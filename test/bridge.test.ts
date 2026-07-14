@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import type { CotalMessage } from "@cotal-ai/core";
-import { runBridge, SendError, type EndpointConfig } from "../src/index.js";
+import { readAllowlist, runBridge, SendError, type EndpointConfig } from "../src/index.js";
 import { FakeEndpoint, FakeTransport, inbound, richFormatter, tick } from "./fakes.js";
 
 function cfgIn(dir: string, over: Partial<EndpointConfig> = {}): EndpointConfig {
@@ -20,6 +20,10 @@ function cfgIn(dir: string, over: Partial<EndpointConfig> = {}): EndpointConfig 
 
 const dm = (from: string, text: string): CotalMessage =>
   ({ id: "m1", ts: Date.now(), space: "s", from: { id: "id-" + from, name: from }, parts: [{ kind: "text", text }], to: "me" }) as CotalMessage;
+
+/** A DM carrying a bind-request data part (what `paw bind` / an agent sends to MINT a code). */
+const bindRequestDm = (from: string): CotalMessage =>
+  ({ id: "br1", ts: Date.now(), space: "s", from: { id: "id-" + from, name: from }, parts: [{ kind: "data", data: { proto: "ai.cotal.bind-request", v: 1 } }], to: "me" }) as unknown as CotalMessage;
 
 // ── allowlist gating ──────────────────────────────────────────────────────────────────────────────
 test("with first-chat learning, first sender is learned + a later stranger is dropped", async () => {
@@ -192,6 +196,84 @@ test("a FORMATTED send that is format-rejected is auto-retried as PLAIN (no mode
   assert.equal(calls[1].text, "alice: done **now**", "the plain retry sends the RAW chunk, not the rendered form");
   assert.ok(acked, "the retried-plain delivery acks — the message is NOT lost to a format 400");
   assert.ok(!naked, "must not nak (it was delivered on the plain retry)");
+});
+
+// ── bind: mint over the mesh, /bind from a NEW chat ────────────────────────────────────────────────
+test("a bind-request DM mints a bind-code back to the sender and is NOT forwarded to any chat", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ep-"));
+  const ep = new FakeEndpoint();
+  const tp = new FakeTransport();
+  // A chat IS bound (42), so a NON-intercepted DM would forward — proving the bind-request is intercepted.
+  const bridge = await runBridge(cfgIn(dir, { seedChats: [42] }), tp, { buildEndpoint: () => ep as never, log: () => {} });
+  await tick();
+  let acked = false;
+  ep.emit("message", bindRequestDm("you"), { ack: () => { acked = true; }, nak: () => {}, durable: true }, { historical: false, kind: "dm" });
+  await tick();
+  await bridge.stop();
+  assert.equal(ep.unicasts.length, 1, "exactly one reply DM back to the requester");
+  assert.equal(ep.unicasts[0].id, "id-you");
+  const dataPart = ep.unicasts[0].parts?.find((p) => p.kind === "data") as { data: { proto: string; code: string; ttlSec: number } } | undefined;
+  assert.ok(dataPart, "the reply carries a data part");
+  assert.equal(dataPart!.data.proto, "ai.cotal.bind-code");
+  assert.equal(dataPart!.data.code.length, 6);
+  assert.match(dataPart!.data.code, /^[0-9A-Z]{6}$/);
+  assert.ok(!/[ILOU]/.test(dataPart!.data.code), "code uses the unambiguous Crockford alphabet");
+  assert.equal(dataPart!.data.ttlSec, 120);
+  const textPart = ep.unicasts[0].parts?.find((p) => p.kind === "text") as { text: string } | undefined;
+  assert.match(textPart!.text, /bind code:/, "a readable text line rides alongside the data part");
+  assert.equal(tp.sends.length, 0, "a bind-request is NEVER forwarded to a chat");
+  assert.ok(acked, "the bind-request DM is acked");
+});
+
+test("/bind authorizes a NEW (non-allowlisted) chat with the minted code; a wrong code is generically rejected", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ep-"));
+  const ep = new FakeEndpoint();
+  const tp = new FakeTransport();
+  const cfg = cfgIn(dir, { seedChats: [] }); // NO chat bound, NO learning — chat 99 is a stranger
+  const bridge = await runBridge(cfg, tp, { buildEndpoint: () => ep as never, log: () => {} });
+  await tick();
+  // A mesh peer mints a code.
+  ep.emit("message", bindRequestDm("cli"), { ack: () => {}, nak: () => {}, durable: true }, { historical: false, kind: "dm" });
+  await tick();
+  const dataPart = ep.unicasts[0].parts?.find((p) => p.kind === "data") as unknown as { data: { code: string } };
+  const code = dataPart.data.code;
+  const wrong = code === "000000" ? "111111" : "000000";
+
+  // A WRONG code from the not-yet-authorized chat 99 → generic reject, allowlist unchanged.
+  tp.inbounds.push(inbound(`/bind ${wrong}`, { chatId: 99, messageId: 10 }));
+  await tick();
+  await tick();
+  assert.ok(tp.sends.some((s) => s.chatId === 99 && s.text === "invalid or expired code"), "wrong code → generic reject");
+  assert.deepEqual([...readAllowlist(cfg)], [], "a wrong code does not change the allowlist");
+
+  // The VALID code from chat 99 → authorized + persisted.
+  tp.inbounds.push(inbound(`/bind ${code}`, { chatId: 99, messageId: 11 }));
+  await tick();
+  await tick();
+  await bridge.stop();
+  assert.ok(tp.sends.some((s) => s.chatId === 99 && /this chat is now authorized/.test(s.text)), "valid code → authorized");
+  assert.deepEqual([...readAllowlist(cfg)], [99], "the valid code adds chat 99 to the allowlist");
+});
+
+test("/bind from an ALREADY-authorized chat REDACTS the code in the bridge log (no live secret in shared logs)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ep-"));
+  const ep = new FakeEndpoint();
+  const tp = new FakeTransport();
+  const logs: string[] = [];
+  // chat 42 IS authorized → the command router (which logs) runs, unlike a stranger's exemption path.
+  const cfg = cfgIn(dir, { seedChats: [42] });
+  const bridge = await runBridge(cfg, tp, { buildEndpoint: () => ep as never, log: (m: string) => logs.push(m) });
+  await tick();
+  ep.emit("message", bindRequestDm("cli"), { ack: () => {}, nak: () => {}, durable: true }, { historical: false, kind: "dm" });
+  await tick();
+  const dataPart = ep.unicasts[0].parts?.find((p) => p.kind === "data") as unknown as { data: { code: string } };
+  const code = dataPart.data.code;
+  tp.inbounds.push(inbound(`/bind ${code}`, { chatId: 42, messageId: 12 }));
+  await tick();
+  await tick();
+  await bridge.stop();
+  assert.ok(logs.some((l) => l.includes("/bind <redacted>")), "the command-router log redacts the bind args");
+  assert.ok(!logs.some((l) => l.includes(code)), "the live code never appears in the bridge log");
 });
 
 test("a `/`-leading swipe-reply threads to the agent instead of command-parsing", async () => {

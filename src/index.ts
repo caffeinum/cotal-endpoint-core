@@ -8,6 +8,7 @@ export * from "./transport.js";
 export * from "./files.js";
 export * from "./transcribe.js";
 export * from "./router.js";
+export * from "./bind.js";
 export * from "./commands.js";
 export * from "./mesh.js";
 export * from "./config.js";
