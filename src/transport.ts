@@ -49,11 +49,27 @@ export interface AudioRef {
   fetch(): Promise<{ bytes: Uint8Array; filename: string }>;
 }
 
+/** A document/photo attached to an inbound message. Like {@link AudioRef}, the DOWNLOAD stays in the
+ *  transport (channel-specific) — core only orchestrates the save through this thunk, so the flow is
+ *  channel-agnostic. The bridge writes the fetched bytes to a per-space downloads dir and routes a
+ *  text reference to the mesh so a LOCAL agent can just read the saved path (no binary crosses the mesh). */
+export interface FileRef {
+  /** Fetch the raw file bytes + a filename (used as the download's basename after sanitization). */
+  fetch(): Promise<{ bytes: Uint8Array; filename: string }>;
+  /** The claimed filename (the transport's best label — sanitized before use as a path). */
+  filename: string;
+  /** The declared MIME type, if the channel provides one (informational). */
+  mimeType?: string;
+  /** The declared byte size, if the channel provides one (informational). */
+  size?: number;
+}
+
 /**
  * One inbound message, normalized by the transport from its native update shape.
  *   - `text` is "" for a pure-voice message (core splices the transcript in before routing).
  *   - `replyToId` is the id of the message this replies to (for reply-threading), if any.
  *   - `audio` carries voice for transcription (undefined for a plain text message).
+ *   - `file` carries a document/photo (undefined for a message with no attachment). A caption becomes `text`.
  */
 export interface Inbound {
   chatId: number;
@@ -62,6 +78,7 @@ export interface Inbound {
   text: string;
   replyToId?: number;
   audio?: AudioRef;
+  file?: FileRef;
 }
 
 /**
@@ -83,6 +100,10 @@ export interface Transport {
   setReaction?(chatId: number, messageId: number, reaction: string | undefined): Promise<void>;
   /** Register the channel's command menu at a scope (default when omitted). Best-effort at the call site. */
   setCommands?(cmds: CommandDesc[], scope?: CommandScope): Promise<void>;
+  /** Upload a LOCAL file (read from `opts.path`) to a chat, with an optional filename + caption. Optional
+   *  like {@link setReaction}/{@link setCommands} — a channel without file upload simply omits it, and the
+   *  bridge falls back to sending the agent's `[[file:…]]` text as-is. Throws {@link SendError} on failure. */
+  sendFile?(chatId: number, opts: { path: string; filename?: string; caption?: string }): Promise<{ messageId: number }>;
   /** Signal "typing…" to a chat (optional; not all channels support it). */
   setTyping?(chatId: number): Promise<void>;
   /**

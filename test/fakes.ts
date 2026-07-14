@@ -84,6 +84,7 @@ export class FakeTransport implements Transport {
   maxLen = 4096;
   inbounds: Inbound[] = [];
   sends: { chatId: number; text: string; mode?: string; replyTo?: number }[] = [];
+  fileSends: { chatId: number; path: string; filename?: string; caption?: string }[] = [];
   reactions: { chatId: number; messageId: number; reaction: string | undefined }[] = [];
   commandsSet: { cmds: CommandDesc[]; scope?: CommandScope }[] = [];
   nextId = 1000;
@@ -91,6 +92,15 @@ export class FakeTransport implements Transport {
   reactThrows = false;
   /** Override to simulate send failures (throw a SendError) or record with custom shape. */
   sendImpl?: (chatId: number, text: string, opts?: { mode?: string; replyTo?: number }) => Promise<{ messageId: number }>;
+  /** Optional file upload — records into {@link fileSends}. Set to `undefined` in a test to simulate a
+   *  transport with NO upload support (the bridge's graceful text-fallback path). Override to throw. */
+  sendFile?: (chatId: number, opts: { path: string; filename?: string; caption?: string }) => Promise<{ messageId: number }> = async (
+    chatId,
+    opts,
+  ) => {
+    this.fileSends.push({ chatId, ...opts });
+    return { messageId: this.nextId++ };
+  };
 
   constructor(formatter: Formatter = plainFormatter) {
     this.formatter = formatter;
@@ -129,6 +139,30 @@ export class FakeTransport implements Transport {
 /** Build an Inbound (channel-agnostic) — the fake-transport analogue of the old `upd()`. */
 export function inbound(text: string, over: Partial<Inbound> = {}): Inbound {
   return { chatId: 42, messageId: over.messageId ?? 1, userId: 42, text, ...over };
+}
+
+/** Build a file (document/photo) Inbound: a `file` FileRef whose fetch() returns canned bytes + the given
+ *  filename. `text` is the caption (default ""); `fetched` counts downloads. Channel-agnostic. */
+export function fileInbound(
+  filename: string,
+  over: Partial<Inbound> = {},
+  bytes: Uint8Array = new Uint8Array([1, 2, 3]),
+  fetched = { n: 0 },
+): Inbound {
+  return {
+    chatId: 42,
+    messageId: over.messageId ?? 1,
+    userId: 42,
+    text: over.text ?? "",
+    file: {
+      filename,
+      async fetch() {
+        fetched.n++;
+        return { bytes, filename };
+      },
+    },
+    ...over,
+  };
 }
 
 export const tick = () => new Promise((r) => setTimeout(r, 30));

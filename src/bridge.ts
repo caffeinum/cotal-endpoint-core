@@ -11,14 +11,17 @@
  *                   to the chat). The bridge CANNOT spawn — a bare endpoint has no manager authority — so
  *                   an unknown/offline name fails loud to the chat.
  */
+import { basename } from "node:path";
 import type { CotalEndpoint, CotalMessage } from "@cotal-ai/core";
 import {
   readAllowlist,
   readSticky,
+  resolveFilesDir,
   writeAllowlist,
   writeSticky,
   type EndpointConfig,
 } from "./config.js";
+import { parseFileDirective, saveInboundFile } from "./files.js";
 import { broadcastPeers, buildEndpoint, presentRoster, resolveTargetId, rolePresent, rosterNames } from "./mesh.js";
 import {
   chunkMessage,
@@ -134,6 +137,14 @@ export async function runBridge(
     body: string,
     ref: ReplyRef,
   ): Promise<{ delivered: number; permanent: number; transient: number }> {
+    // OUTBOUND FILE: an agent embeds `[[file:<abs-path>]]` (optionally `[[file:<path>|<caption>]]`) to send
+    // a local file back to the chat. If the transport supports uploads, strip the directive and upload the
+    // file (any remaining text becomes the caption). If it DOESN'T, fall through and send the text as-is so
+    // the path is at least visible — graceful degradation, never a lost message.
+    const directive = parseFileDirective(body);
+    if (directive && transport.sendFile) {
+      return deliverFileToChats(label, directive, ref);
+    }
     const chunks = chunkMessage(label + body, transport.maxLen);
     let delivered = 0;
     let permanent = 0;
@@ -149,6 +160,34 @@ export async function runBridge(
           else transient++;
           break; // a failed chat won't take the remaining chunks either — stop spamming it
         }
+      }
+    }
+    return { delivered, permanent, transient };
+  }
+
+  // Upload an agent's `[[file:…]]` to EVERY allowlisted chat via transport.sendFile. The caption is the
+  // inline `|<caption>` (or the leftover text), prefixed with the same `<from>: ` label an outbound text
+  // carries. Same per-chat permanent/transient bookkeeping as deliverToChats. Only called when
+  // transport.sendFile exists (the fallback is handled by the caller).
+  async function deliverFileToChats(
+    label: string,
+    directive: NonNullable<ReturnType<typeof parseFileDirective>>,
+    ref: ReplyRef,
+  ): Promise<{ delivered: number; permanent: number; transient: number }> {
+    const captionBody = directive.caption ?? directive.rest;
+    const caption = (label + (captionBody ?? "")).trimEnd() || undefined;
+    let delivered = 0;
+    let permanent = 0;
+    let transient = 0;
+    for (const chatId of allow) {
+      try {
+        const sent = await transport.sendFile!(chatId, { path: directive.path, caption });
+        replyMap.set(chatId, sent.messageId, ref);
+        delivered++;
+      } catch (e) {
+        const outcome = classifySendError(chatId, e);
+        if (outcome.result === "permanent") permanent++;
+        else transient++;
       }
     }
     return { delivered, permanent, transient };
@@ -330,6 +369,30 @@ export async function runBridge(
       // Route the transcript through the UNIFIED path below EXACTLY like a typed message — no "🎙 heard:"
       // text mirror. The send-signal reaction (👀 dm / ⚡ broadcast) on the voice message's id IS the receipt.
       text = transcript;
+    }
+
+    // FILE (document/photo) → a SAVED path routed as text. The binary NEVER crosses the mesh: the transport
+    // downloads it, the bridge saves it to the per-space downloads dir under a SAFE, collision-free name,
+    // then routes a text reference `📎 <name> saved to <abs-path>` (prefixed by any caption) EXACTLY like a
+    // typed message — so @name / reply-threading / sticky / the send-signal reaction all apply below. A LOCAL
+    // agent can just read that path. Skipped when audio is present (voice wins). A download error is surfaced
+    // to the chat + returns (the loop advances → no redelivery loop), never a crash.
+    if (inb.file && !inb.audio) {
+      let saved: string;
+      try {
+        const { bytes, filename } = await inb.file.fetch();
+        saved = saveInboundFile(resolveFilesDir(cfg), filename, bytes);
+      } catch (e) {
+        log(`file download/save failed (chat ${chatId}): ${(e as Error).message}`);
+        await transport.send(chatId, `📎 file download failed: ${(e as Error).message}`, {
+          replyTo: inb.messageId,
+        }).catch(() => {});
+        return;
+      }
+      const reference = `📎 ${basename(saved)} saved to ${saved}`;
+      const caption = inb.text.trim();
+      text = caption ? `${caption}\n${reference}` : reference;
+      log(`saved inbound file → ${saved}`);
     }
 
     const effective: Inbound = { ...inb, text };

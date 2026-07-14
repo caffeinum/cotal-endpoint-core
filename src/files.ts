@@ -1,0 +1,78 @@
+/**
+ * Channel-agnostic file plumbing: sanitize + save an INBOUND attachment to disk, and parse the OUTBOUND
+ * `[[file:…]]` directive an agent embeds in its text. Only node stdlib — no channel SDK. The transport
+ * owns the DOWNLOAD (an {@link import("./transport.js").FileRef}); this owns where the bytes land and how
+ * an agent asks for a file to be sent back.
+ */
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
+
+/**
+ * Reduce an arbitrary claimed filename to a SAFE basename — no path separators, no traversal, no
+ * absolute/nul tricks. Keeps the last path segment, strips control chars, and collapses to a fallback
+ * when nothing usable is left (a name that was all separators / dots). Pure.
+ */
+export function sanitizeFilename(name: string, fallback = "file"): string {
+  // Take the basename of BOTH separator styles (a Windows-style `a\b.png` from a foreign channel too).
+  const base = basename(name.replace(/\\/g, "/"));
+  // Drop path/control chars and leading dots (so `..`, `.`, hidden-file tricks can't survive).
+  const cleaned = base
+    .replace(/[/\\\0-\x1f\x7f]/g, "")
+    .replace(/^\.+/, "")
+    .trim();
+  return cleaned.length ? cleaned : fallback;
+}
+
+/**
+ * Write `bytes` into `dir` under a sanitized, COLLISION-FREE filename, creating `dir` on demand, and
+ * return the ABSOLUTE path written. If the sanitized name already exists, a ` (1)`, ` (2)`… numeric
+ * suffix is inserted before the extension until a free name is found — so two files named `photo.jpg`
+ * never clobber each other. Fails loud on an I/O error (never a silent partial write).
+ */
+export function saveInboundFile(dir: string, filename: string, bytes: Uint8Array): string {
+  mkdirSync(dir, { recursive: true });
+  const safe = sanitizeFilename(filename);
+  const target = uniquePath(dir, safe);
+  writeFileSync(target, bytes);
+  return resolve(target);
+}
+
+/** Resolve a free path in `dir` for `safe`, inserting a ` (n)` suffix before the extension on collision. */
+function uniquePath(dir: string, safe: string): string {
+  const first = join(dir, safe);
+  if (!existsSync(first)) return first;
+  const dot = safe.lastIndexOf(".");
+  const stem = dot > 0 ? safe.slice(0, dot) : safe;
+  const ext = dot > 0 ? safe.slice(dot) : "";
+  for (let n = 1; ; n++) {
+    const candidate = join(dir, `${stem} (${n})${ext}`);
+    if (!existsSync(candidate)) return candidate;
+  }
+}
+
+/** A parsed outbound file directive: the local `path`, an optional inline `caption`, and `rest` — the
+ *  agent's text with the WHOLE `[[file:…]]` token removed (used as the caption when none is inline). */
+export interface FileDirective {
+  path: string;
+  caption?: string;
+  rest: string;
+}
+
+// `[[file:<path>]]` or `[[file:<path>|<caption>]]`. The path is everything up to a `|` or the closing
+// `]]`; a trailing `|<caption>` is optional. Non-greedy so the FIRST directive wins.
+const FILE_DIRECTIVE = /\[\[file:([^\]|]+?)(?:\|([^\]]*))?\]\]/;
+
+/**
+ * Parse the first `[[file:<abs-path>]]` (or `[[file:<path>|<caption>]]`) directive out of an agent's
+ * outgoing text. Returns undefined when there's no directive (a plain message). `rest` is the text with
+ * the directive stripped and trimmed — the bridge uses the inline caption if present, else `rest`. Pure.
+ */
+export function parseFileDirective(text: string): FileDirective | undefined {
+  const m = FILE_DIRECTIVE.exec(text);
+  if (!m) return undefined;
+  const path = m[1].trim();
+  if (!path) return undefined; // `[[file:]]` with no path is not a valid directive
+  const inline = m[2]?.trim();
+  const rest = (text.slice(0, m.index) + text.slice(m.index + m[0].length)).trim();
+  return { path, caption: inline || undefined, rest };
+}

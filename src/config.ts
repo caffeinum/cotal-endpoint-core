@@ -39,6 +39,8 @@ export interface EndpointConfig {
   seedChats: number[];
   /** Opt-in: learn the first sender's chat when the allowlist is empty. Default false. */
   learnFirstChat: boolean;
+  /** Override for where INBOUND attachments (documents/photos) are saved. Absent → `<stateRoot>/<space>/files/`. */
+  filesDir?: string;
 }
 
 /** `<stateRoot>/<space>/`, created on demand. */
@@ -46,6 +48,12 @@ export function stateDir(cfg: EndpointConfig): string {
   const dir = join(cfg.stateRoot, cfg.space);
   mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+/** Where INBOUND attachments land: the configured `filesDir` override, else `<stateRoot>/<space>/files/`.
+ *  NOT created here — {@link import("./files.js").saveInboundFile} mkdirs on demand at write time. */
+export function resolveFilesDir(cfg: EndpointConfig): string {
+  return cfg.filesDir ?? join(stateDir(cfg), "files");
 }
 
 /** The pinned open-mesh peer id: read `<name>.id`, else mint one and persist it. cotal 0.11's
