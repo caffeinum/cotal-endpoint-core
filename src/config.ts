@@ -41,6 +41,19 @@ export interface EndpointConfig {
   learnFirstChat: boolean;
   /** Override for where INBOUND attachments (documents/photos) are saved. Absent → `<stateRoot>/<space>/files/`. */
   filesDir?: string;
+  /** Override for the channel a received-file announcement is multicast to. Absent → {@link FILES_CHANNEL_DEFAULT}. */
+  filesChannel?: string;
+}
+
+/** The default channel a received-file announcement is published to — a DEDICATED #files channel,
+ *  distinct from the endpoint's broadcast `channel` (#general), so file-feed subscribers don't have to
+ *  wade through chatter. */
+export const FILES_CHANNEL_DEFAULT = "files";
+
+/** The channel a received-file announcement is multicast to: the configured `filesChannel` override,
+ *  else {@link FILES_CHANNEL_DEFAULT}. Mirrors {@link resolveFilesDir}. */
+export function resolveFilesChannel(cfg: EndpointConfig): string {
+  return cfg.filesChannel ?? FILES_CHANNEL_DEFAULT;
 }
 
 /** `<stateRoot>/<space>/`, created on demand. */

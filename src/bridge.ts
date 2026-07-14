@@ -16,12 +16,20 @@ import type { CotalEndpoint, CotalMessage } from "@cotal-ai/core";
 import {
   readAllowlist,
   readSticky,
+  resolveFilesChannel,
   resolveFilesDir,
   writeAllowlist,
   writeSticky,
   type EndpointConfig,
 } from "./config.js";
-import { parseFileDirective, saveInboundFile } from "./files.js";
+import {
+  appendFileManifest,
+  FILE_PART_PROTO,
+  formatFileAnnouncement,
+  parseFileDirective,
+  saveInboundFile,
+  type FileEntry,
+} from "./files.js";
 import { broadcastPeers, buildEndpoint, presentRoster, resolveTargetId, rolePresent, rosterNames } from "./mesh.js";
 import {
   chunkMessage,
@@ -319,6 +327,33 @@ export async function runBridge(
     };
   }
 
+  // Announce a received file on the DEDICATED #files channel (in ADDITION to the normal sticky/@name
+  // route below): append it to the local manifest AND multicast a FileEntry `data` part so any mesh
+  // subscriber gets a structured, path-carrying feed of every inbound file. BOTH legs are best-effort —
+  // the bytes are already safely on disk, so an announce/manifest failure only LOGS; it never naks,
+  // duplicates, or breaks the primary route (publish-only — the endpoint doesn't subscribe to #files).
+  async function announceFile(entry: FileEntry): Promise<void> {
+    try {
+      appendFileManifest(resolveFilesDir(cfg), entry);
+    } catch (e) {
+      log(`file manifest append failed (best-effort, ignored): ${(e as Error).message}`);
+    }
+    try {
+      // core's multicast DISCARDS the `text` arg when `parts` is supplied (parts ?? [{text}]), so the
+      // readable line MUST ride as an explicit text part — else `cotal_join("files")` live watchers get
+      // an empty-text message. The text part is first (human-visible), the FileEntry data part second.
+      await ep.multicast(formatFileAnnouncement(entry), {
+        channel: resolveFilesChannel(cfg),
+        parts: [
+          { kind: "text", text: formatFileAnnouncement(entry) },
+          { kind: "data", data: { proto: FILE_PART_PROTO, ...entry } },
+        ],
+      });
+    } catch (e) {
+      log(`#files announce failed (best-effort, ignored): ${(e as Error).message}`);
+    }
+  }
+
   async function handleInbound(inb: Inbound): Promise<void> {
     const chatId = inb.chatId;
     const verdict = classifyChat(chatId, allow, cfg.learnFirstChat);
@@ -379,8 +414,10 @@ export async function runBridge(
     // to the chat + returns (the loop advances → no redelivery loop), never a crash.
     if (inb.file && !inb.audio) {
       let saved: string;
+      let bytesLen: number | undefined;
       try {
         const { bytes, filename } = await inb.file.fetch();
+        bytesLen = bytes.length;
         saved = saveInboundFile(resolveFilesDir(cfg), filename, bytes);
       } catch (e) {
         log(`file download/save failed (chat ${chatId}): ${(e as Error).message}`);
@@ -389,9 +426,26 @@ export async function runBridge(
         }).catch(() => {});
         return;
       }
-      const reference = `📎 ${basename(saved)} saved to ${saved}`;
-      const caption = inb.text.trim();
-      text = caption ? `${caption}\n${reference}` : reference;
+      const savedName = basename(saved);
+      const captionText = inb.text.trim();
+      // ADDITIVE #files feed: announce the received file (manifest + a FileEntry data-part multicast)
+      // BEFORE the primary route — best-effort, never blocks or alters the sticky/@name dispatch below.
+      const entry: FileEntry = {
+        v: 1,
+        ts: Date.now(),
+        name: savedName,
+        path: saved,
+        size: bytesLen ?? inb.file.size,
+        mime: inb.file.mimeType,
+        caption: captionText || undefined,
+        source: cfg.name,
+        chatId,
+      };
+      // Fire-and-forget: the manifest append inside runs synchronously (before the first await), but the
+      // multicast round-trip must NOT gate the primary sticky/@name route below if the mesh is slow.
+      void announceFile(entry);
+      const reference = `📎 ${savedName} saved to ${saved}`;
+      text = captionText ? `${captionText}\n${reference}` : reference;
       log(`saved inbound file → ${saved}`);
     }
 

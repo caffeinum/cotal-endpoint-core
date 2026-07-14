@@ -13,6 +13,9 @@ import type {
   Transport,
 } from "../src/index.js";
 
+/** A mesh message part, mirroring @cotal-ai/core's `Part` closely enough for the fake to record. */
+type Part = { kind: string; [key: string]: unknown };
+
 /** A roster row shaped like a cotal Presence: card.{id,name,kind?,role?} + status. */
 export interface Row {
   card: { id: string; name: string; kind?: "agent" | "endpoint"; role?: string };
@@ -28,7 +31,7 @@ export class FakeEndpoint extends EventEmitter {
   card = { id: "telegram-id", name: "telegram", kind: "endpoint" as const };
   roster: Row[] = [];
   unicasts: { id: string; text: string }[] = [];
-  multicasts: { text: string; channel?: string }[] = [];
+  multicasts: { text: string; channel?: string; parts?: Part[] }[] = [];
   anycasts: { service: string; text: string }[] = [];
   /** Legacy accessor mirroring the old fake's `sent.{unicast,multicast}` shape. */
   get sent() {
@@ -43,8 +46,12 @@ export class FakeEndpoint extends EventEmitter {
     this.unicasts.push({ id, text });
     return {} as never;
   }
-  async multicast(text: string, opts?: { channel?: string }) {
-    this.multicasts.push({ text, channel: opts?.channel });
+  async multicast(text: string, opts?: { channel?: string; parts?: Part[] }) {
+    // Only attach `parts` when present so existing deepEqual assertions on {text,channel} still hold
+    // (a strict deepEqual distinguishes an own `parts: undefined` key from a missing one).
+    const rec: { text: string; channel?: string; parts?: Part[] } = { text, channel: opts?.channel };
+    if (opts?.parts) rec.parts = opts.parts;
+    this.multicasts.push(rec);
     return {} as never;
   }
   async anycast(service: string, text: string) {
