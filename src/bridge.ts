@@ -370,6 +370,7 @@ export async function runBridge(
         return ok;
       },
       identity: { name: cfg.name, space: cfg.space, server: cfg.server, defaultChannel: cfg.channel },
+      helpFooter: cfg.helpFooter, // deployment hint appended to /help (e.g. the always-on @global agent)
       // Bind the /switch render seam to the transport's inline-keyboard capability, scoped to this chat.
       // Absent when the channel has no buttons → the command layer degrades to the /to text hint.
       sendButtons: transport.sendButtons

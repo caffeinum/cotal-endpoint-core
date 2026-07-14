@@ -48,6 +48,10 @@ export interface EndpointConfig {
   filesDir?: string;
   /** Override for the channel a received-file announcement is multicast to. Absent → {@link FILES_CHANNEL_DEFAULT}. */
   filesChannel?: string;
+  /** Optional free-text line appended to the bottom of `/help` — a deployment hint (e.g. "@global is
+   *  always on — DM it to reach this machine"). Channel-agnostic: the core just renders it; the deploy
+   *  supplies the content. Absent → no footer. */
+  helpFooter?: string;
 }
 
 /** The default channel a received-file announcement is published to — a DEDICATED #files channel,

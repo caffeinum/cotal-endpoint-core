@@ -182,6 +182,14 @@ test("/help lists every command + explains addressing", async () => {
   for (const c of COMMANDS) assert.match(rec.replies[0], new RegExp(`/${c.command} `));
   assert.match(rec.replies[0], /@name msg → DM/);
   assert.match(rec.replies[0], /swipe-reply/);
+  assert.ok(!rec.replies[0].includes("always on"), "no footer when helpFooter is unset");
+});
+
+test("/help appends helpFooter at the bottom when the deploy sets one", async () => {
+  const { env, rec } = fakeEnv([], { helpFooter: "💬 @global is always on — DM it to reach this machine" });
+  await runCommand(parseCommand("/help")!, env);
+  assert.match(rec.replies[0], /@global is always on/);
+  assert.ok(rec.replies[0].trimEnd().endsWith("reach this machine"), "footer is the LAST thing in /help");
 });
 
 test("unknown /command → friendly /help pointer (not silent)", async () => {

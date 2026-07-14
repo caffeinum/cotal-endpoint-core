@@ -37,6 +37,9 @@ export interface CommandEnv {
   tryBind(code: string): boolean;
   /** The bridge's own mesh identity + the default broadcast channel (for /here and /help). */
   identity: { name: string; space: string; server: string; defaultChannel: string };
+  /** OPTIONAL deployment hint appended to the bottom of /help (e.g. "@global is always on — DM it to
+   *  reach this machine"). Content-agnostic — the deploy config supplies it; absent → no footer. */
+  helpFooter?: string;
   /** OPTIONAL render seam: send an inline-keyboard prompt (the bridge fills it from
    *  {@link import("./transport.js").Transport.sendButtons}). A channel WITHOUT inline keyboards omits it
    *  → the handler degrades to a plain-text hint. Kept optional so the whole layer stays channel-agnostic. */
@@ -105,7 +108,8 @@ export const COMMANDS: CommandSpec[] = [
     description: "List commands and how addressing works",
     handler: async (_args, env) => {
       const cmds = COMMANDS.map((c) => `/${c.command} — ${c.description}`).join("\n");
-      await env.reply(`commands:\n${cmds}\n\n${HELP_ADDRESSING}`);
+      const footer = env.helpFooter ? `\n\n${env.helpFooter}` : "";
+      await env.reply(`commands:\n${cmds}\n\n${HELP_ADDRESSING}${footer}`);
     },
   },
   {
