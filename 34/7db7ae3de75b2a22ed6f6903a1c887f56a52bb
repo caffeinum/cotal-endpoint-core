@@ -1,0 +1,45 @@
+src/files.ts
+  s_ed25aaaf9c7e77::t_323720ce5769fa 7
+  s_ed25aaaf9c7e77::t_77b6625d0d1865 53-121,124-145
+  s_ed25aaaf9c7e77::t_11372dd32e2a91 122-123
+src/config.ts
+  s_ed25aaaf9c7e77::t_df582d2cc6ce58 44-56
+src/bridge.ts
+  s_ed25aaaf9c7e77::t_9214c25a9e15e8 417,420,429-443,447-448
+  s_ed25aaaf9c7e77::t_e3146e648d7ed8 444-446
+  s_ed25aaaf9c7e77::t_d0427606d7685c 342-344,347-350
+  s_ed25aaaf9c7e77::t_db9dfe8a684b57 330-341,345-346,351-356
+  s_ed25aaaf9c7e77::t_527b4eef16057e 19,25-32
+test/fakes.ts
+  s_ed25aaaf9c7e77::t_1a8415a601bfac 16-18
+  s_ed25aaaf9c7e77::t_2ab0aa78bd6f9e 50-54
+  s_ed25aaaf9c7e77::t_9b83a1938169f9 49
+  s_ed25aaaf9c7e77::t_cc76df4a1ae66e 34
+test/files.test.ts
+  s_ed25aaaf9c7e77::t_df8ff341180d2f 275-278,281-289
+  s_ed25aaaf9c7e77::t_fa3b77792a92db 13,19-33,36-44
+  s_ed25aaaf9c7e77::t_1167df409c0a7b 132
+  s_ed25aaaf9c7e77::t_65b5fb8f0732b1 206-252,254,256-257,262-274,279-280,290-303
+  s_ed25aaaf9c7e77::t_38362eb3dbfb74 253,255,258-261
+  s_ed25aaaf9c7e77::t_1e47e15bd76ac7 45
+pnpm-lock.yaml
+  s_ed25aaaf9c7e77::t_f310beea2bf3e6 1-419
+pnpm-workspace.yaml
+  s_ed25aaaf9c7e77::t_6f648fa1631aba 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.13",
+  "base_commit_sha": "347db7ae3de75b2a22ed6f6903a1c887f56a52bb",
+  "prompts": {},
+  "sessions": {
+    "s_ed25aaaf9c7e77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90dd1251-161e-469a-96db-040d1e555035",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Aleksey Bykhun <theisease@gmail.com>"
+    }
+  }
+}
