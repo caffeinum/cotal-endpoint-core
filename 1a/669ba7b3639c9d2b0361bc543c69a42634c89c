@@ -1,0 +1,26 @@
+src/bridge.ts
+  s_ed25aaaf9c7e77::t_b4dff826d3a959 373
+src/commands.ts
+  s_ed25aaaf9c7e77::t_cf26713aa3be63 40-42
+  s_ed25aaaf9c7e77::t_b5d21545eb5c69 111-112
+src/config.ts
+  s_ed25aaaf9c7e77::t_2bff458bd1e5fc 51-54
+test/commands.test.ts
+  s_ed25aaaf9c7e77::t_1e4489f8359b55 185-192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.13",
+  "base_commit_sha": "1a669ba7b3639c9d2b0361bc543c69a42634c89c",
+  "prompts": {},
+  "sessions": {
+    "s_ed25aaaf9c7e77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90dd1251-161e-469a-96db-040d1e555035",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Aleksey Bykhun <theisease@gmail.com>"
+    }
+  }
+}
