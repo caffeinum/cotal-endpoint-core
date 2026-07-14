@@ -1,0 +1,134 @@
+/**
+ * Channel-agnostic config skeleton + local state for a cotal endpoint. Only node stdlib + (elsewhere)
+ * @cotal-ai/core — no channel SDK. A concrete channel EXTENDS {@link EndpointConfig} with its own fields
+ * (token, api keys, formatting flags) and reuses these state helpers.
+ *
+ * State lives under `<stateRoot>/<space>/`:
+ *   <name>.id           — the pinned open-mesh peer id (same id across restarts so an agent's reply
+ *                         redelivers to the SAME durable consumer after a bounce)
+ *   <name>.offset       — a transport's poll cursor, so a restart doesn't reprocess buffered updates
+ *   chats.json          — the learned chat allowlist (a stranger can't inject onto the mesh)
+ *   <name>.sticky.json  — per-chat sticky destinations
+ */
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { parseStickyTarget, type StickyTarget } from "./router.js";
+
+/** Crash-safe write: write a sibling temp file then atomically rename over the target, so a crash
+ *  mid-write never leaves a half-written (corrupt) file — the reader sees either the old or the new. */
+export function writeFileAtomic(path: string, data: string): void {
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, data);
+  renameSync(tmp, path);
+}
+
+/** The channel-agnostic config fields every endpoint needs. A channel extends this. */
+export interface EndpointConfig {
+  space: string;
+  server: string;
+  /** The mesh peer name the bridge joins under. */
+  name: string;
+  /** The default broadcast channel (subscribed for reply-forwarding). */
+  channel: string;
+  /** Optional JWT creds file contents (authed mesh). Absent → open localhost mesh. */
+  creds?: string;
+  /** Root dir for local state (`<stateRoot>/<space>/…`). */
+  stateRoot: string;
+  /** Chat ids seeded onto the allowlist via config (e.g. --chat). */
+  seedChats: number[];
+  /** Opt-in: learn the first sender's chat when the allowlist is empty. Default false. */
+  learnFirstChat: boolean;
+}
+
+/** `<stateRoot>/<space>/`, created on demand. */
+export function stateDir(cfg: EndpointConfig): string {
+  const dir = join(cfg.stateRoot, cfg.space);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/** The pinned open-mesh peer id: read `<name>.id`, else mint a UUID and persist it. */
+export function peerId(cfg: EndpointConfig): string {
+  const file = join(stateDir(cfg), `${cfg.name}.id`);
+  if (existsSync(file)) {
+    const id = readFileSync(file, "utf8").trim();
+    if (id) return id;
+  }
+  const id = randomUUID();
+  // Atomic write: the `.id` file IS the durability guarantee — a half-written/blanked id would mint a
+  // NEW uuid next start, so an agent's replies redeliver to the OLD (dead) consumer and are lost.
+  writeFileAtomic(file, id);
+  return id;
+}
+
+const OFFSET_FILE = (cfg: EndpointConfig) => join(stateDir(cfg), `${cfg.name}.offset`);
+
+export function readOffset(cfg: EndpointConfig): number {
+  const f = OFFSET_FILE(cfg);
+  if (!existsSync(f)) return 0;
+  const n = Number(readFileSync(f, "utf8").trim());
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+export function writeOffset(cfg: EndpointConfig, offset: number): void {
+  writeFileAtomic(OFFSET_FILE(cfg), String(offset));
+}
+
+const CHATS_FILE = (cfg: EndpointConfig) => join(stateDir(cfg), "chats.json");
+
+/** Load the learned chat allowlist (seed chats unioned in). A corrupt/unparseable file must NOT
+ *  brick startup — it's logged and treated as empty (the seed chats still apply), so a bad write
+ *  degrades to "no learned chats" rather than a fatal JSON.parse throw. */
+export function readAllowlist(cfg: EndpointConfig, log?: (m: string) => void): Set<number> {
+  const f = CHATS_FILE(cfg);
+  const set = new Set<number>(cfg.seedChats);
+  if (existsSync(f)) {
+    try {
+      const arr = JSON.parse(readFileSync(f, "utf8")) as unknown;
+      if (Array.isArray(arr)) for (const x of arr) if (Number.isInteger(x)) set.add(x as number);
+    } catch (e) {
+      (log ?? ((m: string) => console.error(`[cotal-endpoint] ${m}`)))(
+        `chats.json is corrupt (${(e as Error).message}) — treating as empty`,
+      );
+    }
+  }
+  return set;
+}
+
+export function writeAllowlist(cfg: EndpointConfig, chats: Set<number>): void {
+  writeFileAtomic(CHATS_FILE(cfg), JSON.stringify([...chats]));
+}
+
+const STICKY_FILE = (cfg: EndpointConfig) => join(stateDir(cfg), `${cfg.name}.sticky.json`);
+
+/** Load the per-chat sticky targets (chatId → StickyTarget). Like the allowlist, a corrupt/unparseable
+ *  file must NOT brick startup — it's logged and treated as empty (every chat falls back to the @all
+ *  default), and any malformed per-chat entry is skipped (parseStickyTarget → undefined). */
+export function readSticky(cfg: EndpointConfig, log?: (m: string) => void): Map<number, StickyTarget> {
+  const f = STICKY_FILE(cfg);
+  const map = new Map<number, StickyTarget>();
+  if (existsSync(f)) {
+    try {
+      const obj = JSON.parse(readFileSync(f, "utf8")) as unknown;
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+        for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+          const id = Number(k);
+          const t = parseStickyTarget(v);
+          if (Number.isInteger(id) && t) map.set(id, t);
+        }
+      }
+    } catch (e) {
+      (log ?? ((m: string) => console.error(`[cotal-endpoint] ${m}`)))(
+        `sticky file is corrupt (${(e as Error).message}) — treating as empty`,
+      );
+    }
+  }
+  return map;
+}
+
+export function writeSticky(cfg: EndpointConfig, sticky: Map<number, StickyTarget>): void {
+  const obj: Record<string, StickyTarget> = {};
+  for (const [k, v] of sticky) obj[k] = v;
+  writeFileAtomic(STICKY_FILE(cfg), JSON.stringify(obj));
+}
